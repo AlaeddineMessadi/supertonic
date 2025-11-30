@@ -23,7 +23,12 @@ A real-time voice-to-voice conversational AI system built with Supertonic TTS an
 ## Quick Start
 
 ```bash
-# Install dependencies
+# Install dependencies in nodejs directory (required for helper.js)
+cd ../nodejs
+npm install
+cd ../real-time
+
+# Install dependencies in real-time directory
 npm install
 
 # Start Ollama (if not already running)
