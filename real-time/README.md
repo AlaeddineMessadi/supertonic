@@ -81,6 +81,38 @@ Open `conversation-client.html` in your browser to start a voice-to-voice conver
 - `GET /models` - List available Ollama models
 - `GET /voices` - List available voice styles
 
+## Voice Transcription
+
+### Browser-Based (Recommended - Works Immediately!)
+
+The conversation client uses the **Web Speech API** for voice transcription, which works immediately in modern browsers (Chrome, Edge, Safari) without any additional setup. Just click the "🎤 Start Voice" button and grant microphone permissions.
+
+### Server-Side Whisper Integration (Optional)
+
+For server-side transcription with higher accuracy, you can integrate [whisper.cpp](https://github.com/ggerganov/whisper.cpp) or use the OpenAI Whisper API.
+
+**Using whisper.cpp:**
+
+1. Build whisper.cpp following the [official instructions](https://github.com/ggerganov/whisper.cpp#usage)
+2. Download a model (e.g., `ggml-base.en.bin`)
+3. Implement the `/transcribe` endpoint in `server.js` to call whisper.cpp
+
+**Example integration:**
+
+```javascript
+// In server.js, add to /transcribe endpoint
+const { exec } = require('child_process');
+const whisperPath = '/path/to/whisper.cpp/bin/main';
+const modelPath = '/path/to/models/ggml-base.en.bin';
+
+// Process audio and return transcription
+exec(`${whisperPath} -m ${modelPath} -f audio.wav`, (error, stdout, stderr) => {
+  // Parse output and return transcription
+});
+```
+
+**Note:** The conversation client already supports voice input using the browser Web Speech API, which works immediately without any server-side setup.
+
 ## License
 
 MIT
