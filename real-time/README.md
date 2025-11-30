@@ -18,7 +18,9 @@ A real-time voice-to-voice conversational AI system built with Supertonic TTS an
 
 1. **Node.js** (v18 or higher)
 2. **Ollama** installed and running with at least one model pulled
-3. **Supertonic assets** (ONNX models and voice styles) in `../assets/`
+3. **Supertonic assets** (ONNX models and voice styles) in `../../assets/` (parent directory)
+   - The assets folder should contain `onnx/` and `voice_styles/` directories
+   - If missing, download from the parent directory: `git clone https://huggingface.co/Supertone/supertonic assets`
 
 ## Quick Start
 
@@ -54,6 +56,7 @@ Open `test-client.html` in your browser to test basic TTS streaming with text in
 Open `conversation-client.html` in your browser to start a voice-to-voice conversation with the AI.
 
 **Features:**
+
 - 🎤 Voice input using Web Speech API
 - 🤖 Real-time conversations with Ollama
 - ⚡ Low-latency audio streaming
@@ -62,6 +65,7 @@ Open `conversation-client.html` in your browser to start a voice-to-voice conver
 - 📱 Responsive design
 
 **Controls:**
+
 - **Model Selection**: Choose from available Ollama models
 - **Voice**: Select voice style (M1, M2, F1, F2)
 - **Steps**: Control TTS quality (1-20, default: 3)
@@ -80,4 +84,3 @@ Open `conversation-client.html` in your browser to start a voice-to-voice conver
 ## License
 
 MIT
-

@@ -136,8 +136,9 @@ app.use((req, res, next) => {
 });
 
 // Configuration
-const ONNX_DIR = path.resolve(__dirname, '../assets/onnx');
-const VOICE_STYLES_DIR = path.resolve(__dirname, '../assets/voice_styles');
+// Assets are in the parent directory (../../assets relative to real-time)
+const ONNX_DIR = path.resolve(__dirname, '../../assets/onnx');
+const VOICE_STYLES_DIR = path.resolve(__dirname, '../../assets/voice_styles');
 const DEFAULT_VOICE = 'M1.json';
 const DEFAULT_STEPS = 3;
 const DEFAULT_SPEED = 1.4;
