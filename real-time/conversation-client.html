@@ -719,26 +719,6 @@
                     clientLogger.info('Reusing existing microphone stream');
                 }
 
-                    // Test microphone - check if we can get audio levels
-                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    const source = audioContext.createMediaStreamSource(mediaStream);
-                    const analyser = audioContext.createAnalyser();
-                    analyser.fftSize = 256;
-                    source.connect(analyser);
-
-                    // Check audio levels after a short delay
-                    setTimeout(() => {
-                        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-                        analyser.getByteFrequencyData(dataArray);
-                        const maxLevel = Math.max(...dataArray);
-                        clientLogger.info('Microphone audio level:', maxLevel);
-                        if (maxLevel > 0) {
-                            clientLogger.info('✅ Microphone is working and receiving audio');
-                        } else {
-                            clientLogger.warn('⚠️ Microphone may not be receiving audio (level: 0)');
-                        }
-                    }, 1000);
-
                 // Reset transcription text for new recording
                 transcriptionText = '';
 
@@ -748,6 +728,19 @@
                 const analyser = audioContext.createAnalyser();
                 analyser.fftSize = 256;
                 source.connect(analyser);
+
+                // Check audio levels after a short delay
+                setTimeout(() => {
+                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    analyser.getByteFrequencyData(dataArray);
+                    const maxLevel = Math.max(...dataArray);
+                    clientLogger.info('Microphone audio level:', maxLevel);
+                    if (maxLevel > 0) {
+                        clientLogger.info('✅ Microphone is working and receiving audio');
+                    } else {
+                        clientLogger.warn('⚠️ Microphone may not be receiving audio (level: 0)');
+                    }
+                }, 1000);
 
                 let audioCheckInterval = setInterval(() => {
                     if (!isRecording) {
