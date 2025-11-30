@@ -36,8 +36,11 @@ npm install
 # Start Ollama (if not already running)
 ollama serve
 
-# Pull a model
-ollama pull llama3.2
+# Pull a low-latency model (recommended for real-time conversations)
+ollama pull llama3.2:1b
+
+# Or for better quality with slightly higher latency:
+# ollama pull llama3.2
 
 # Start the server
 npm start
