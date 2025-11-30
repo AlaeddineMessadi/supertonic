@@ -127,6 +127,7 @@
         // Voice recognition
         let recognition = null;
         let isRecording = false;
+        let mediaStream = null; // Store media stream to reuse
         let transcriptionText = '';
         let continuousListening = false; // Real-time mode: always listening
         let currentReader = null; // Track current stream reader to abort if needed
