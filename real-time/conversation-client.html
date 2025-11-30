@@ -696,17 +696,27 @@
             }
 
             try {
-                // Request microphone permission first and keep stream open for testing
-                let mediaStream = null;
-                try {
-                    mediaStream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true
-                        }
-                    });
-                    clientLogger.info('Microphone permission granted');
+                // Reuse existing stream if available, otherwise request permission
+                if (!mediaStream || mediaStream.getTracks().every(track => track.readyState === 'ended')) {
+                    try {
+                        mediaStream = await navigator.mediaDevices.getUserMedia({
+                            audio: {
+                                echoCancellation: true,
+                                noiseSuppression: true,
+                                autoGainControl: true
+                            }
+                        });
+                        clientLogger.info('Microphone permission granted');
+                        // Store stream globally to reuse
+                        window.currentMediaStream = mediaStream;
+                    } catch (permissionError) {
+                        clientLogger.error('Microphone permission denied:', permissionError);
+                        showStatus('❌ Microphone permission denied. Please allow microphone access in your browser settings and try again.', 'error');
+                        return;
+                    }
+                } else {
+                    clientLogger.info('Reusing existing microphone stream');
+                }
 
                     // Test microphone - check if we can get audio levels
                     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -728,17 +738,8 @@
                         }
                     }, 1000);
 
-                } catch (permissionError) {
-                    clientLogger.error('Microphone permission denied:', permissionError);
-                    showStatus('❌ Microphone permission denied. Please allow microphone access in your browser settings and try again.', 'error');
-                    return;
-                }
-
                 // Reset transcription text for new recording
                 transcriptionText = '';
-
-                // Store media stream BEFORE starting recognition (keep it open)
-                window.currentMediaStream = mediaStream;
 
                 // Monitor audio levels continuously
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -823,13 +824,12 @@
                 listeningIndicator.removeAttribute('data-tooltip');
             }
 
-            // Stop media stream if it exists
-            if (window.currentMediaStream) {
-                window.currentMediaStream.getTracks().forEach(track => {
-                    track.stop();
-                    clientLogger.debug('Stopped media track:', track.kind);
-                });
-                window.currentMediaStream = null;
+            // Don't stop media stream - keep it open for reuse
+            // Only stop if explicitly disabling continuous mode or closing
+            if (!continuousListening) {
+                // Only stop stream if not in continuous mode
+                // Keep it open for faster reconnection
+                clientLogger.debug('Keeping media stream open for reuse');
             }
 
             try {
@@ -998,20 +998,10 @@
                 ollamaStatusIcon.setAttribute('data-tooltip', 'Ollama is not running! Run: ollama serve');
             }
 
-            // Check microphone availability
+            // Don't check microphone on page load - wait for user to click voice button
+            // This prevents unnecessary permission prompts
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                try {
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const hasMicrophone = devices.some(device => device.kind === 'audioinput');
-                    if (!hasMicrophone) {
-                        clientLogger.warn('No microphone devices found');
-                        showStatus('⚠️ No microphone detected. Please connect a microphone to use voice input.', 'error');
-                    } else {
-                        clientLogger.info('Microphone devices available:', devices.filter(d => d.kind === 'audioinput').length);
-                    }
-                } catch (e) {
-                    clientLogger.error('Error enumerating devices:', e);
-                }
+                clientLogger.info('Microphone API available - will request permission when voice button is clicked');
             } else {
                 clientLogger.warn('getUserMedia not supported');
             }
