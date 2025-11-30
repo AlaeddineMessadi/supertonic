@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import { WebSocketServer } from 'ws';
+import { createServer } from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -15,6 +17,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+const server = createServer(app);
 
 // ============================================================================
 // Logging Utility
@@ -575,6 +578,273 @@ async function streamOllamaToSpeech(
   res.end();
 }
 
+/**
+ * Stream Ollama to TTS via WebSocket
+ */
+async function streamOllamaToSpeechWebSocket(
+  userMessage,
+  conversationId,
+  model,
+  style,
+  steps,
+  speed,
+  systemPrompt,
+  ws
+) {
+  // Get or create conversation history
+  let messages = conversations.get(conversationId) || [];
+
+  // Use provided system prompt or default (ensure it's a string)
+  const promptToUse =
+    systemPrompt && typeof systemPrompt === 'string'
+      ? systemPrompt
+      : DEFAULT_SYSTEM_PROMPT;
+
+  // Initialize with system prompt if this is a new conversation
+  if (messages.length === 0) {
+    messages.push({ role: 'system', content: promptToUse });
+    logger.debug('Initialized new conversation with system prompt (WebSocket)');
+  }
+
+  messages.push({ role: 'user', content: userMessage });
+
+  ws.send(JSON.stringify({ type: 'conversation_start', conversationId }));
+
+  try {
+    // Check if Ollama is available first
+    try {
+      const healthCheck = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
+      if (!healthCheck.ok) {
+        throw new Error('Ollama is not running or not accessible');
+      }
+    } catch (healthError) {
+      ws.send(
+        JSON.stringify({
+          type: 'error',
+          message: `Ollama is not running! Please start Ollama: ollama serve (URL: ${OLLAMA_BASE_URL})`,
+        })
+      );
+      return;
+    }
+
+    const ollamaResponse = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: model,
+        messages: messages,
+        stream: true,
+      }),
+    });
+
+    if (!ollamaResponse.ok) {
+      const errorText = await ollamaResponse.text();
+      throw new Error(
+        `Ollama API error (${ollamaResponse.status}): ${ollamaResponse.statusText}. ${errorText}`
+      );
+    }
+
+    // node-fetch v3 uses Node.js streams, not ReadableStream with getReader()
+    const decoder = new TextDecoder();
+    let fullResponse = '';
+    let currentSentence = '';
+    let buffer = '';
+
+    // Process Ollama stream using Node.js stream API
+    for await (const chunk of ollamaResponse.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const data = JSON.parse(line);
+
+            if (data.message && data.message.content) {
+              const content = data.message.content;
+              fullResponse += content;
+              currentSentence += content;
+
+              ws.send(
+                JSON.stringify({
+                  type: 'text_chunk',
+                  text: content,
+                  fullText: fullResponse,
+                })
+              );
+
+              // Smart phrase detection (same logic as SSE version)
+              const sentenceEndings = /[.!?](?:\s+|$)/;
+              const strongBoundaries = /[;:]\s+/;
+              const weakBoundaries = /,\s+/;
+
+              const minPhraseLength = 15;
+              const maxPhraseLength = 80;
+
+              let shouldGenerate = false;
+              let phraseEnd = -1;
+
+              // Priority 1: Sentence endings
+              const sentenceMatches = [
+                ...currentSentence.matchAll(sentenceEndings),
+              ];
+              if (sentenceMatches.length > 0) {
+                const lastMatch = sentenceMatches[sentenceMatches.length - 1];
+                phraseEnd = lastMatch.index + lastMatch[0].length;
+                shouldGenerate = true;
+              }
+
+              // Priority 2: Strong boundaries
+              if (!shouldGenerate) {
+                const strongMatch = currentSentence.match(strongBoundaries);
+                if (strongMatch) {
+                  phraseEnd = strongMatch.index + strongMatch[0].length;
+                  if (phraseEnd >= minPhraseLength * 0.7) {
+                    shouldGenerate = true;
+                  }
+                }
+              }
+
+              // Priority 2.5: Word boundaries
+              if (
+                !shouldGenerate &&
+                currentSentence.length >= minPhraseLength
+              ) {
+                const lastSpace = currentSentence.lastIndexOf(' ');
+                if (lastSpace >= minPhraseLength * 0.8) {
+                  phraseEnd = lastSpace;
+                  shouldGenerate = true;
+                }
+              }
+
+              // Priority 3: Commas
+              if (
+                !shouldGenerate &&
+                currentSentence.length >= minPhraseLength * 2
+              ) {
+                const commaMatch = currentSentence.match(weakBoundaries);
+                if (commaMatch) {
+                  phraseEnd = commaMatch.index + commaMatch[0].length;
+                  if (phraseEnd >= minPhraseLength * 1.3) {
+                    shouldGenerate = true;
+                  }
+                }
+              }
+
+              // Priority 4: Force generation
+              if (
+                !shouldGenerate &&
+                currentSentence.length >= maxPhraseLength
+              ) {
+                const lastSpace = currentSentence.lastIndexOf(
+                  ' ',
+                  maxPhraseLength
+                );
+                if (lastSpace >= minPhraseLength) {
+                  phraseEnd = lastSpace;
+                  shouldGenerate = true;
+                } else if (currentSentence.length >= maxPhraseLength * 1.3) {
+                  phraseEnd = maxPhraseLength;
+                  shouldGenerate = true;
+                }
+              }
+
+              if (shouldGenerate && phraseEnd > 0) {
+                const completePhrase = currentSentence
+                  .substring(0, phraseEnd)
+                  .replace(/^\s+/, '')
+                  .replace(/\s+$/, ' ');
+                currentSentence = currentSentence.substring(phraseEnd);
+
+                if (completePhrase) {
+                  try {
+                    const result = await textToSpeech._infer(
+                      [completePhrase],
+                      style,
+                      steps,
+                      speed
+                    );
+                    const duration = result.duration[0];
+                    const wavLen = Math.floor(
+                      textToSpeech.sampleRate * duration
+                    );
+                    const wavChunk = result.wav.slice(0, wavLen);
+                    const wavBuffer = audioToWavBuffer(
+                      wavChunk,
+                      textToSpeech.sampleRate
+                    );
+                    const audioBase64 = wavBuffer.toString('base64');
+
+                    ws.send(
+                      JSON.stringify({
+                        type: 'audio',
+                        text: completePhrase,
+                        duration: duration,
+                        sampleRate: textToSpeech.sampleRate,
+                        data: audioBase64,
+                      })
+                    );
+                  } catch (ttsError) {
+                    logger.error('TTS error:', ttsError);
+                  }
+                }
+              }
+            }
+
+            if (data.done) {
+              if (currentSentence.trim()) {
+                try {
+                  const result = await textToSpeech._infer(
+                    [currentSentence.trim()],
+                    style,
+                    steps,
+                    speed
+                  );
+                  const duration = result.duration[0];
+                  const wavLen = Math.floor(textToSpeech.sampleRate * duration);
+                  const wavChunk = result.wav.slice(0, wavLen);
+                  const wavBuffer = audioToWavBuffer(
+                    wavChunk,
+                    textToSpeech.sampleRate
+                  );
+                  const audioBase64 = wavBuffer.toString('base64');
+
+                  ws.send(
+                    JSON.stringify({
+                      type: 'audio',
+                      text: currentSentence.trim(),
+                      duration: duration,
+                      sampleRate: textToSpeech.sampleRate,
+                      data: audioBase64,
+                    })
+                  );
+                } catch (ttsError) {
+                  logger.error('TTS error:', ttsError);
+                }
+              }
+
+              messages.push({ role: 'assistant', content: fullResponse });
+              conversations.set(conversationId, messages);
+
+              ws.send(
+                JSON.stringify({
+                  type: 'conversation_end',
+                  fullResponse: fullResponse,
+                })
+              );
+            }
+          } catch (parseError) {
+            continue;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    ws.send(JSON.stringify({ type: 'error', message: error.message }));
+  }
+}
+
 // Health check
 app.get('/health', async (req, res) => {
   let ollamaAvailable = false;
@@ -752,6 +1022,204 @@ app.get('/conversation/:conversationId', (req, res) => {
   res.json({ conversationId, messages });
 });
 
+// WebSocket server for bidirectional streaming
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+wss.on('connection', (ws) => {
+  logger.info('WebSocket client connected');
+
+  ws.on('message', async (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+
+      if (data.type === 'synthesize') {
+        const {
+          text,
+          voice = DEFAULT_VOICE,
+          steps = DEFAULT_STEPS,
+          speed = DEFAULT_SPEED,
+        } = data;
+
+        if (!textToSpeech) {
+          ws.send(
+            JSON.stringify({ type: 'error', message: 'TTS not initialized' })
+          );
+          return;
+        }
+
+        // Load voice style
+        let style;
+        try {
+          const voicePath = path.join(
+            VOICE_STYLES_DIR,
+            voice.endsWith('.json') ? voice : `${voice}.json`
+          );
+          if (!fs.existsSync(voicePath)) {
+            ws.send(
+              JSON.stringify({
+                type: 'error',
+                message: `Voice style not found: ${voice}`,
+              })
+            );
+            return;
+          }
+          style = loadVoiceStyle([voicePath], false);
+        } catch (error) {
+          ws.send(
+            JSON.stringify({
+              type: 'error',
+              message: `Failed to load voice style: ${error.message}`,
+            })
+          );
+          return;
+        }
+
+        // Stream chunks
+        const chunks = chunkText(text, 0);
+        ws.send(JSON.stringify({ type: 'start', totalChunks: chunks.length }));
+
+        for (let i = 0; i < chunks.length; i++) {
+          try {
+            const result = await textToSpeech._infer(
+              [chunks[i]],
+              style,
+              steps,
+              speed
+            );
+            const duration = result.duration[0];
+            const wavLen = Math.floor(textToSpeech.sampleRate * duration);
+            const wavChunk = result.wav.slice(0, wavLen);
+            const wavBuffer = audioToWavBuffer(
+              wavChunk,
+              textToSpeech.sampleRate
+            );
+            const audioBase64 = wavBuffer.toString('base64');
+
+            ws.send(
+              JSON.stringify({
+                type: 'chunk',
+                chunkIndex: i + 1,
+                totalChunks: chunks.length,
+                duration: duration,
+                sampleRate: textToSpeech.sampleRate,
+                data: audioBase64,
+              })
+            );
+
+            // Add silence between chunks
+            if (i < chunks.length - 1) {
+              const silenceDuration = 0.3;
+              const silenceLen = Math.floor(
+                silenceDuration * textToSpeech.sampleRate
+              );
+              const silence = new Array(silenceLen).fill(0);
+              const silenceBuffer = audioToWavBuffer(
+                silence,
+                textToSpeech.sampleRate
+              );
+              const silenceBase64 = silenceBuffer.toString('base64');
+
+              ws.send(
+                JSON.stringify({
+                  type: 'silence',
+                  duration: silenceDuration,
+                  data: silenceBase64,
+                })
+              );
+            }
+          } catch (error) {
+            logger.error('WebSocket TTS error:', error);
+            ws.send(
+              JSON.stringify({
+                type: 'error',
+                message: error.message,
+                chunkIndex: i + 1,
+              })
+            );
+            break;
+          }
+        }
+
+        ws.send(JSON.stringify({ type: 'end' }));
+      } else if (data.type === 'conversation') {
+        // Conversational mode: Ollama + TTS
+        const {
+          message,
+          conversationId = `conv_${Date.now()}`,
+          model = DEFAULT_MODEL,
+          voice = DEFAULT_VOICE,
+          steps = DEFAULT_STEPS,
+          speed = DEFAULT_SPEED,
+          systemPrompt,
+        } = data;
+
+        if (!textToSpeech) {
+          ws.send(
+            JSON.stringify({ type: 'error', message: 'TTS not initialized' })
+          );
+          return;
+        }
+
+        // Load voice style
+        let style;
+        try {
+          const voicePath = path.join(
+            VOICE_STYLES_DIR,
+            voice.endsWith('.json') ? voice : `${voice}.json`
+          );
+          if (!fs.existsSync(voicePath)) {
+            ws.send(
+              JSON.stringify({
+                type: 'error',
+                message: `Voice style not found: ${voice}`,
+              })
+            );
+            return;
+          }
+          style = loadVoiceStyle([voicePath], false);
+        } catch (error) {
+          ws.send(
+            JSON.stringify({
+              type: 'error',
+              message: `Failed to load voice style: ${error.message}`,
+            })
+          );
+          return;
+        }
+
+        // Use custom system prompt if provided, otherwise use default
+        const systemPromptToUse =
+          systemPrompt && typeof systemPrompt === 'string'
+            ? systemPrompt
+            : DEFAULT_SYSTEM_PROMPT;
+
+        // Stream Ollama + TTS
+        await streamOllamaToSpeechWebSocket(
+          message,
+          conversationId,
+          model,
+          style,
+          steps,
+          speed,
+          systemPromptToUse,
+          ws
+        );
+      }
+    } catch (error) {
+      logger.error('WebSocket message error:', error);
+      ws.send(JSON.stringify({ type: 'error', message: error.message }));
+    }
+  });
+
+  ws.on('close', () => {
+    logger.info('WebSocket client disconnected');
+  });
+
+  ws.on('error', (error) => {
+    logger.error('WebSocket error:', error);
+  });
+});
+
 // ============================================================================
 // Error Handling Middleware (must be last)
 // ============================================================================
@@ -788,11 +1256,12 @@ async function startServer() {
     process.exit(1);
   }
 
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     logger.info(`\n🚀 Supertonic Real-Time TTS Server`);
     logger.info(`   Listening on http://localhost:${PORT}`);
     logger.info(`   SSE Endpoint: POST http://localhost:${PORT}/stream`);
     logger.info(`   Conversation: POST http://localhost:${PORT}/conversation`);
+    logger.info(`   WebSocket: ws://localhost:${PORT}/ws`);
     logger.info(`   Health: http://localhost:${PORT}/health`);
     logger.info(`   Ollama: ${OLLAMA_BASE_URL} (Model: ${DEFAULT_MODEL})\n`);
   });
