@@ -40,7 +40,37 @@ The server will start on `http://localhost:3001`.
 
 ## Usage
 
-Open `conversation-client.html` in your browser to start a voice conversation with the AI.
+### Basic TTS Streaming
+
+Open `test-client.html` in your browser to test basic TTS streaming with text input.
+
+### Voice Conversations
+
+Open `conversation-client.html` in your browser to start a voice-to-voice conversation with the AI.
+
+**Features:**
+- 🎤 Voice input using Web Speech API
+- 🤖 Real-time conversations with Ollama
+- ⚡ Low-latency audio streaming
+- 🎯 User priority - AI stops when you speak
+- 🔄 Continuous listening mode
+- 📱 Responsive design
+
+**Controls:**
+- **Model Selection**: Choose from available Ollama models
+- **Voice**: Select voice style (M1, M2, F1, F2)
+- **Steps**: Control TTS quality (1-20, default: 3)
+- **Speed**: Control speech speed (0.5-2.0, default: 1.4)
+- **Real-time Mode**: Enable continuous listening
+
+## API Endpoints
+
+- `POST /stream` - Basic TTS streaming (SSE)
+- `POST /conversation` - Conversational AI with Ollama (SSE)
+- `WS /ws` - WebSocket endpoint for bidirectional streaming
+- `GET /health` - Health check
+- `GET /models` - List available Ollama models
+- `GET /voices` - List available voice styles
 
 ## License
 
